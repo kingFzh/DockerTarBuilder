@@ -16,9 +16,18 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Clean up Docker to free space
+      # run: |
+          # docker system prune -a -f
+          # docker volume prune -f
       run: |
+          pwd
           docker system prune -a -f
           docker volume prune -f
+          # https://github.com/actions/runner-images/issues/2840#issuecomment-790492173
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
 
     - name: Pull Docker Images and Package
       run: |
