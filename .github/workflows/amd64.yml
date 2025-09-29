@@ -5,7 +5,7 @@ on:
       docker_images:
         description: '请填写docker镜像名称 多个用英文逗号分开'
         required: true
-        default: 'alpine:latest,busybox:stable-glibc'  # 设置默认的 Docker 镜像列表
+        default: 'alpine:latest,busybox:stable-glibc'
 
 jobs:
   pull_and_package:
@@ -15,27 +15,64 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Clean up Docker to free space
+    - name: Pre-clean disk space
       run: |
-          docker system prune -a -f
-          docker volume prune -f
+        echo "=== 初始磁盘空间 ==="
+        df -h
+        echo "=== 清理系统空间 ==="
+        sudo docker system prune -a -f
+        sudo docker volume prune -f
+        sudo apt-get clean
+        sudo rm -rf /usr/share/dotnet/sdk/
+        echo "=== 清理后磁盘空间 ==="
+        df -h
 
     - name: Pull Docker Images and Package
       run: |
+        set -e  # 遇到错误立即退出
+        
         images="${{ github.event.inputs.docker_images }}"
-          IFS=',' read -r -a image_array <<< "$images"
-          for image in "${image_array[@]}"; do
-            docker pull "${image}" --platform "linux/amd64"
-            image_name="${image//\//_}"
-            image_name="${image_name//:/_}"
-            docker save "${image}" -o "${image_name}-amd64.tar"
-            gzip -c "${image_name}-amd64.tar" > "${image_name}-amd64.tar.gz"
-            rm "${image_name}-amd64.tar"
-          done
+        IFS=',' read -r -a image_array <<< "$images"
+        
+        for image in "${image_array[@]}"; do
+          echo "🚀 开始处理: ${image}"
+          
+          # 拉取镜像
+          docker pull "${image}" --platform "linux/amd64"
+          
+          # 处理镜像名称
+          image_name=$(echo "${image}" | sed 's/[\/:]/-/g')
+          
+          # 直接保存为gzip，避免中间tar文件
+          echo "💾 保存并压缩镜像..."
+          docker save "${image}" | gzip -c > "${image_name}-amd64.tar.gz"
+          
+          # 立即删除镜像释放空间
+          echo "🧹 清理镜像..."
+          docker rmi "${image}" || true
+          
+          # 检查文件大小
+          ls -lh "${image_name}-amd64.tar.gz"
+          
+          echo "✅ 完成: ${image}"
+          echo "---"
+        done
+        
+        echo "=== 最终磁盘使用情况 ==="
+        df -h
+        docker system df
 
-    - name: Upload artifact
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: my-artifact
-        path: ${{ github.workspace }}/*.tar.gz
-        retention-days: 1  # 将保留天数设置为 1 天 最多可设置90天
+        name: docker-images-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ./*.tar.gz
+        retention-days: 1
+        compression-level: 0  # 已经是压缩文件，不需要再次压缩
+
+    - name: Post cleanup
+      if: always()
+      run: |
+        # 无论成功失败都清理
+        docker system prune -a -f
+        rm -f ./*.tar.gz
